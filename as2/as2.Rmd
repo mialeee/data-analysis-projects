@@ -1,0 +1,238 @@
+---
+title: "Assignment 2"
+author: "MinJi Lee"
+subtitle: STATS 762
+output:
+  html_document:
+    highlight: pygments
+    theme: readable
+    toc: yes
+    toc_depth: 2
+    toc_float: yes
+  pdf_document:
+    toc: yes
+    toc_depth: '2'
+---
+```{r setup, message = FALSE, warning=FALSE}
+library(ggplot2)
+library(tidyverse)
+library(mgcv)
+set.seed(563)
+
+df = read.csv('ERv1.csv')
+er <- subset(df, select = -c(year, day))
+
+er$weekday = factor(er$weekday)
+er$month = factor(er$month)
+```
+
+
+**Q1**
+<br>
+
+*Generate appropriate plots *
+
+```{r}
+pairs(er)
+```
+<br>
+Some interesting observations: <br>
+
+In the relationship between count and T_mean, there are two clusters of points for low counts and high counts despite the mean temperature.  
+
+In the relationship between weekday and count, there are days that has significantly lower count. 
+
+In the relationship between month and T_mean, seasonal effect in temperature can be noticed.               
+
+```{r}
+ggplot(data = er, aes(x = weekday, y = count)) +
+    geom_bar(stat = "summary", fun = "mean", fill = "ivory4") +  # Use bar plot for count
+    labs(title = "Average count per Weekday",
+         x = "Weekday",
+         y = "Count")  
+```
+<br>
+There is significantly lower number of count around 10 on weekends. Possible reason could be that the hospital has shorter working hours on the weekends than weekdays. 
+ 
+
+```{r}
+ggplot(er, aes(x = month)) +
+    # Add a histogram layer of count against month
+    geom_bar(stat = "count", fill = "honeydew3", alpha = 0.5) +
+    # Add a scatter plot layer of Tmean against month
+    geom_point(aes(y = T_mean), color = "honeydew4") +
+    # Customize the plot
+    labs(title = "Scatter Plot of Tmean against Month on Top of Histogram of Count",
+         x = "Month",
+         y = "Count (Histogram) and Tmean (Scatter Plot)")
+```
+<br>
+There is lowest temperature around June~August and highest temperature around December~February so we know the data is from NZ. 
+<br>
+For August (when the temperature is low) and December (when the temperature is high), there is no apparent difference in the count number. For February and December, their temperatures are relatively similar but there is lowest number of count in February whereas highest number of count in December. Therefore, there seems to be no relationship between the count and the temperature. 
+<br>
+**Q2**
+<br>
+**a)**
+
+*Use generalized additive models to examine the relationships of interest and, briefly comment on what you have found from gam.*
+
+```{r}
+gam_model = gam(count ~ month + weekday + s(T_mean), data = er, family = poisson(link = "log"))
+
+summary(gam_model)
+
+plot(gam_model, select = 1)
+```
+Since daily mean temperature is the only continuous numeric data, if there is a non-linearity, it would be caused by the T_mean variable. 
+The edf of T_mean term is high (edf = 3.951), which suggests that the T_mean has a nonlinear relationship with the daily count of hospital admissions. The plot of the mean daily temperature vs the smooth term shows the non-linearity in the mean daily temperature, which is effectively captured by the link function in the model.
+<br>
+<br>
+**b)**
+<br>
+*It has been informed that T_mean(k), where k is an integer, effectively captures the non-linear relationship. Fit a suitable model (considering additive effects only) incorporating T_mean(k) and any other necessary terms.*
+<br>
+Tring to find the optimal k: 
+```{r}
+testing.gam = gam(count ~ month + weekday + s(I(T_mean^-15)), data = er, family = poisson(link = "log"))
+
+testing.glm = glm(count ~ month + weekday + I(T_mean^-15), data = er, family = poisson(link = "log"))
+
+OG.glm = glm(count ~ month + weekday + T_mean, data = er, family = poisson(link = "log"))
+
+AIC(testing.glm, OG.glm)
+```
+
+I tried different values for k. 
+
+Making T_mean to the power of a negative value effectively fixed the non-linearity - letting k down to -15 makes lowers the edf to 1.058. The smooth term used to model it became almost linear. 
+
+However, T_mean term with negative k doesn't have a significance (high p-value) with the count variable anymore which at the end, makes a less favorable fit with higher AIC. 
+
+So a positive value for k was more appropriate. 
+
+2: edf 3.534, AIC 2022.801 <br>
+3: edf 4.023, AIC 2022.099<br>
+4: edf 4.265, AIC 2021.823<br>
+5: edf 4.378, AIC 2021.745<br>
+6: edf 4.673, AIC 2021.762<br>
+...<br>
+10: edf 2.689, AIC 2022.501<br>
+11: edf 2.213, AIC 2022.855<br>
+<br>
+We want a model with lower AIC even if it has a higher edf because higher edf might indicate a more complex model, but lower AIC suggests that increase in complexity is worth it due to the improved model fit. Lower AIC suggests a better balance between the goodness of fit and model complexity. Therefore I choose k as 5 which has the lowest AIC. 
+<br>
+So the final model is: 
+```{r}
+k = 5
+
+T_meank.glm = glm(count ~ month + weekday + I(T_mean^k), family = poisson(link = "log"), data = er)
+
+summary(T_meank.glm)
+
+1-pchisq(285.34, 323)
+```
+Since we have a grouped data, we can check if model estimation is correct - chisq test gave a p-value of 0.935, meaning poisson model is a suitable model to use. 
+<br>
+<br>
+**Q3**
+<br>
+*Based on your model in 2(b), find the final model by exploring whether the effect of mean daily temperature is the same for every month or not. Briefly comment on the process of selecting the final model. Present the diagnostic plot of your final model and comment on its fit.*
+
+```{r}
+# With interaction 
+int.glm = glm(count ~ month * I(T_mean^5) + weekday, family = poisson(link = "log"), data = er)
+summary(int.glm)
+```
+
+```{r}
+anova(int.glm, T_meank.glm, test = "Chisq")
+
+AIC(int.glm, T_meank.glm)
+```
+
+In exploring whether the effect of mean daily temperature (T_mean) is the same for every month, I added an interaction term between T_mean^5 and month to the model. This interaction term allows the relationship between T_mean^5 and the daily count of hospital admissions to vary depending on the month, capturing potential seasonal effects on the relationship. 
+
+We could see that interaction of (mean temperature)^5 and some months (March, April, September, November, December) has significant relationship with the daily count of hospital admissions due to heat. This interaction suggests that the impact of temperature^5 on daily count varies depending on the specific month. 
+
+The addition of the interaction term resulted in a model with lower residual deviance and improved fit - anova test showed that deviance for model with interaction is lower with 242.70, than model without interaction with deviance of 285.34. AIC is also lower by 20 for model with interaction with AIC of 2001.099 than model without interaction with 2021.745.   
+
+This indicates that adding the interaction is favorable and the effect of T_mean is indeed different across different months towards the daily count of hospital admissions due to heat. 
+
+Diagnostic plots of the final model: 
+```{r}
+plot(int.glm)
+```
+
+<br>
+In the residual vs fitted value plot and the scale location plot, there is a clear pattern of two clusters at different range of fitted values. This suggests that the model is not adequately capturing the underlying non-linear effects. Even though we tried to transform the T_mean variable to capture the non-linearity, but it's still there.  
+
+The QQ plot is not linear at each ends of the line, suggesting the residuals of the model doesn't follow a normal distribution. But will ignore it due to the Central Limit Theorem. 
+
+The standardized residuals vs. leverage plot shows that there are no points exceeding the Cook's distance line, indicating no influential points that require special attention.
+
+<br>
+**Q4**
+<br>
+*Based on your final model in 3, predict the number of hospital admissions due to heat for Saturday, Jan 1, 2011, where the mean temperature was 21.5. *
+
+Year and day do not significantly impact the daily count of hospital admissions due to heat because the cycles of days form weekdays and the cycles of months form years. So here is the predicted number of hospital admissions due to heat for Saturday of January with mean temperatrue of 21.5: 
+
+```{r}
+new_data <- data.frame(month = factor(1, levels = 1:12), weekday = factor("Saturday", levels = c("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")), T_mean = 21.5  
+)
+
+predicted_count <- predict(int.glm, newdata = new_data, type = "response")
+
+print(predicted_count)
+```
+
+<br>
+**Q5**
+<br>
+*Based on your final model in 3, use the parametric bootstrapping to assess the 95% confidence interval for the expected number of hospital admissions on Jan 1, 2011, where the mean temperature was 21.5. *
+
+```{r}
+# Number of observations
+n.days <- nrow(er)
+
+# Number of bootstrap iterations
+n.boots <- 10000
+
+# Matrix to store estimated coefficients from each bootstrap iteration
+coef.boot <- matrix(0, nrow = n.boots, ncol = length(coef(int.glm)))
+
+# Vector to store estimates of the count at which the date is Jan 1, 2011, and mean temperature is 21.5
+temp21_5.boot <- numeric(n.boots)
+
+# Loop over bootstrap iterations
+for (i in 1:n.boots) {
+    # Simulate a new dataset using Poisson distribution based on the fitted model predictions
+    simulated_counts <- rpois(n.days, lambda = predict(int.glm, type = "response"))
+    
+    # Create a new dataset with simulated counts
+    simulated_data <- data.frame(er)
+    simulated_data$count <- simulated_counts
+    
+    # Fit the model to the new simulated dataset
+    fit.boot <- glm(count ~ weekday + month * T_mean^5, family = poisson(link = "log"), data = simulated_data)
+    
+    # Store the estimated coefficients in a row of the coef.boot matrix
+    coef.boot[i, ] <- coef(fit.boot)
+    
+    # Predict the expected count for Jan 1, 2011, with mean temperature 21.5
+    # Create a new data frame for the specified condition
+    jan1_2011 <- data.frame(weekday = "Saturday", month = 1, T_mean = 21.5)
+    
+    jan1_2011$weekday <- as.factor(jan1_2011$weekday)
+    jan1_2011$month <- as.factor(jan1_2011$month)
+    
+    # Predict the expected count for the specified condition using the fitted model
+    temp21_5.boot[i] <- predict(fit.boot, newdata = jan1_2011, type = "response")
+}
+
+# calculate the 95% confidence interval
+ci_lower <- quantile(temp21_5.boot, probs = 0.025)
+ci_upper <- quantile(temp21_5.boot, probs = 0.975)
+```
+95% confidence interval for the expected number of hospital admissions on Jan 1, 2011, where the mean temperature was 21.5 is: [`r ci_lower`, `r ci_upper`]. 

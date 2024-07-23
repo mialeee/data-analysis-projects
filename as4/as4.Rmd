@@ -1,0 +1,177 @@
+---
+title: "Assignment 4"
+author: "MinJi Lee"
+subtitle: STATS 762
+output:
+  html_document:
+    highlight: pygments
+    theme: readable
+    toc: yes
+    toc_depth: 2
+    toc_float: yes
+  pdf_document:
+    toc: yes
+    toc_depth: '2'
+---
+```{r setup, message = FALSE, warning=FALSE}
+library(nnet)
+library(caret)
+library(rpart)
+library(randomForest)
+library(rpart.plot)
+library(gbm)
+library(tidyverse)
+
+air.df <- read.csv(file='train_airline_c.csv', header = TRUE)
+test.df = read.csv(file='test_airline_c.csv', header = TRUE)
+
+#Find satisfactory levels of 0
+ind0 <- apply(air.df[,c(7:20)],2,function(x) which(x==0))
+ind0.test <- apply(test.df[,c(7:20)],2,function(x) which(x==0))
+
+#Remove
+air.df <- air.df[-unique(unlist(ind0)),]
+test.df <- test.df[-unique(unlist(ind0)),]
+```
+
+
+**Q1**
+```{r}
+air.df$Gender = as.factor(air.df$Gender)
+air.df$Customer.Type = as.factor(air.df$Customer.Type)
+air.df$Type.of.Travel = as.factor(air.df$Type.of.Travel)
+air.df$Class = as.factor(air.df$Class)
+air.df$satisfaction = as.factor(air.df$satisfaction)
+
+test.df$Gender = as.factor(test.df$Gender)
+test.df$Customer.Type = as.factor(test.df$Customer.Type)
+test.df$Type.of.Travel = as.factor(test.df$Type.of.Travel)
+test.df$Class = as.factor(test.df$Class)
+test.df$satisfaction = as.factor(test.df$satisfaction)
+```
+
+**Q2**
+<br>
+*Fit the following classifiers and compare their predictabilities for test set using use choice of method*
+<br>
+<br>
+*a: Logistic/multinomial regression*
+```{r}
+mn = multinom(satisfaction ~ ., data = air.df)
+```
+```{r}
+# class prediction for the test data
+pred.mn = predict(mn, newdata = test.df)
+conf.mn = confusionMatrix(pred.mn, test.df$satisfaction)
+conf.mn
+```
+<br>
+
+*b: Parsimonious classification tree *
+```{r}
+# find cp according to the 1se rule for parsimonious tree. 
+tree = rpart(satisfaction ~ ., data = air.df, method = 'class')
+# 1se.cp
+cp.1se=max(tree$cptable[tree$cptable[,4]<sum(tree$cptable[which.min(tree$cptable[,4]),c(4,5)]),1])
+# prune
+prunedTree = prune(tree, cp = cp.1se)
+# draw tree
+prp(prunedTree, type = 2, extra = 1, main = "")
+```
+
+```{r}
+# predict
+pred.tree = predict(prunedTree, newdata = test.df, type = "class")
+conf.tree = confusionMatrix(pred.tree, test.df$satisfaction)
+conf.tree
+```
+<br>
+*c: Random forest classification *
+```{r}
+set.seed(10393)
+
+rf = randomForest(satisfaction ~ ., data = air.df, importance = TRUE)
+plot(rf)
+# error flattened meaning doesn't improve with more trees therefore we have enough number of trees. 
+
+pred.rf = predict(rf, newdata = test.df)
+conf.rf = confusionMatrix(pred.rf, test.df$satisfaction)
+conf.rf
+```
+
+<br>
+*d: Gradient boosting classification  *
+```{r}
+set.seed(10393)
+
+# Create a new binary variable bin.satisfaction
+air.df$satisfaction = ifelse(air.df$satisfaction == "neutral or dissatisfied", 0, 1)
+test.df$satisfaction = ifelse(test.df$satisfaction == "neutral or dissatisfied", 0, 1)
+
+gbm = gbm(satisfaction ~ ., data = air.df, distribution = 'bernoulli', n.tree = 100, shrinkage = 0.1, cv.folds = 10)
+# (also tried with more trees and with smaller learning factor but there wasn't much difference in bernoulli deviance and accuracy when used for prediction.)
+
+gbm.perf = gbm.perf(gbm, method = "cv")
+
+pred.gbm = predict(gbm, newdata = test.df) # this predicts log odds
+pred.factor = 1/(1+exp(-pred.gbm))
+pred.factor = ifelse(pred.factor>0.5, 1, 0)
+pred.factor = factor(pred.factor)
+  
+test.df$satisfaction = factor(test.df$satisfaction)
+
+conf.gbm = confusionMatrix(pred.factor, test.df$satisfaction)
+conf.gbm
+```
+
+
+<br>
+**Q3**
+```{r}
+conf.mn$overall
+conf.tree$overall
+conf.rf$overall
+conf.gbm$overall
+```
+<br>
+average accuracy for classifiers are: <br>
+multinomial with 2 classes: 0.874 <br>
+parsimonious classification tree: 0.866 <br>
+rf: 0.944 <br>
+gbm: 0.902 <br>
+
+Based on the average accuracy of the classifiers, random forest performs the best predictive performance. Random forest algorithm is good at capturing the patterns in the data and is robust to overfitting, therefore makes accurate predictions. 
+
+Gradient Boosting model is second best. GBM can handle complex interactions between variables and the iterative boosting process helps it to predict well. 
+
+Multinomial regression follows, providing a good level of prediction. However, it might not capture the patterns as effectively as ensemble methods like RF and GBM. But this model is useful for interpretation and understanding the effect of individual predictor variables. 
+
+parsimonious classification tree has the lowest accuracy because a single tree is not as powerful as ensemble methods. Also due to pruning, overfitting is prevented but ability to predict accurately is also lowered. 
+
+**Q4**
+*The parametric model (Logistic or multinomial regression in 2(a)) shows the relation explicitly. Choose three factors and describe how they affect airline satisfaction level using the fitted model in 2(a). Write the reasons.*
+
+```{r}
+mn
+```
+
+1. Customer Type
+
+'Customer.TypeLoyal Customer' has a positive coefficient of 2.789, indicating that being a loyal customer increases the log odds of being satisfied with the airline. 
+
+This is because loyal customers often receive better service. 
+
+2. Type of Travel
+
+'Type.of.TravelPersonal Travel' has a negative coefficient of -3.336, suggesting that personal travel is associated with a lower log odds of satisfaction compared to business travel. 
+
+This is because business travelers paid with company's money while personal travelers spent their own money therefore have higher expectations. 
+
+3. Class
+
+'ClassEco' has a coefficient of -0.815 and 'ClassEco Plus' has a coefficient of -1.063. They both have a negative coefficient indicating that travelling in economy or economy+ is associated with a lower log odds of being satisfied compared to business class. 
+
+This is because passengers in economy or economy+ classes often experience less comfort, fewer amenities, and less personalised service compared to business class passengers. 
+
+Furthermore, economy+ passengers are even less satisfied than those in the economy class when economy+ seems like an upgrade from economy. Possible reason is that they felt that the additional cost was not justified by the better service or comfort they received compared to economy class. 
+

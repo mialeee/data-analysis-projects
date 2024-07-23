@@ -1,0 +1,215 @@
+---
+title: "Assignment 3"
+author: "MinJi Lee"
+subtitle: STATS 762
+output:
+  html_document:
+    highlight: pygments
+    theme: readable
+    toc: yes
+    toc_depth: 2
+    toc_float: yes
+  pdf_document:
+    toc: yes
+    toc_depth: '2'
+---
+```{r setup, message = FALSE, warning=FALSE}
+library(ggplot2)
+library(tidyverse)
+library(glmnet)
+library(splines)
+
+set.seed(1234)
+
+df = read.csv('Mosquito.csv')
+
+df$RESULT = as.factor(df$RESULT)
+```
+
+
+**Q1**
+<br>
+
+*causal diagram *
+<br>
+ ![causal diagram](C:\\Users\\ledom\\Downloads\\diagram.jpg){width="30%"}
+<br>
+YEAR, WEEK, and NUMBER has direct effect on RESULT. 
+
+**Q2 **
+<br>
+*Fit a sensible model to address the research interest. Which variables affect the probability for WNV significantly?*
+
+```{r}
+# binomial because binary response variable
+binom = glm(RESULT~., family = binomial, data = df)
+
+summary(binom)
+
+1-pchisq(14033, 29485)
+```
+
+All three variables significantly affect the probability for WNV shown by small p-values. 
+
+1-pchisq has a big p-value, meaning the binomial model is appropriate to use. 
+
+<br>
+**Q3**
+<br>
+*Scientists commented that the effect of WEEK, YEAR and NUMBER on RESULT is likely to be non-linear. We consider the two non-parametric models ((a) polynomial regression and (b) natural cubic spline) for non-linearity.*
+<br>
+*a) The three variables are represented by polynomials, with maximum degrees set at 10 for WEEK and YEAR and 16 for NUMBER. Instead of finding the optimal degrees, fit a regression model using the l1 norm penalty. Present a plot showing the number of non-zero coefficients against λ.*
+
+```{r}
+# generate polynomial basis functions 
+poly_year = poly(df$YEAR, 10, raw=TRUE)
+poly_week = poly(df$WEEK, 10, raw=TRUE)
+poly_number = poly(df$NUMBER, 16, raw=TRUE)
+
+# making model matrix
+X = cbind(poly_year, poly_week, poly_number)
+
+# fit lasso 
+lasso_model = cv.glmnet(X, df[,4], family = 'binomial', alpha = 1, standardize = TRUE)
+
+# plotting 
+lambda = lasso_model$lambda
+num_of_nonzero_coeffs = lasso_model[["glmnet.fit"]][["df"]]
+
+plot(lambda, num_of_nonzero_coeffs)
+```
+
+<br>
+*b) The three variables are represented by natural cubic splines, with maximum degrees of freedom set at 10 for YEAR, 30 for WEEK, and 50 for NUMBER. Instead of finding the optimal degrees, fit a regression model using the l1 norm penalty. Present a plot showing the number of non-zero coefficients against λ. *
+```{r}
+# generate natural splines 
+splines_year = ns(df$YEAR, df = 10)
+splines_week = ns(df$WEEK, df = 30)
+splines_number = ns(df$NUMBER, df = 50)
+
+# making model matrix
+X2 = cbind(splines_year, splines_week, splines_number)
+
+# fit lasso 
+lasso_model2 = cv.glmnet(X2, df[,4], family = 'binomial', alpha = 1, standardize = TRUE)
+
+# plotting 
+lambda2 = lasso_model2$lambda
+num_of_nonzero_coeffs2 = lasso_model2[["glmnet.fit"]][["df"]]
+  
+plot(lambda2, num_of_nonzero_coeffs2)
+```
+
+<br>
+*c) We compare the fitted probabilities for WNV in the year 2019. Firstly, calculate the empirical probability for WNV presence for each week from Weeks 23 to 39 in the year 2019.*
+```{r}
+# Convert RESULT column to numeric
+df$RESULT = as.numeric(as.character(df$RESULT))
+
+# Calculate empirical probabilities
+empirical_probs = df %>%
+  filter(YEAR == 2019) %>%
+  group_by(WEEK) %>%
+  summarize(empirical_prob = mean(RESULT, na.rm = TRUE))
+
+empirical_probs
+```
+
+*Then, predict the probability of WNV presence for each test in 2019 using the parsimonious models from Q3(a) and Q3(b), as well as the fitted model in Q2. Present box plots of predictions grouped by week per model and compare the result to the empirical probabilities. *
+<br>
+*model from Q3(a)*
+```{r}
+data2019 = subset(df, YEAR==2019)
+  
+poly_year_2019 = poly(data2019$YEAR, degree = 10, raw = TRUE)
+poly_week_2019 = poly(data2019$WEEK, degree = 10, raw = TRUE)
+poly_number_2019 = poly(data2019$NUMBER, degree = 16, raw = TRUE)
+
+# Create the design matrix for 2019
+X_2019 = cbind(poly_year_2019, poly_week_2019, poly_number_2019)
+
+# predict for RESULTs in 2019
+pred_a = predict(lasso_model, newx = X_2019, type = "response") # lambda.1se because we want parsimonious model
+
+result_a_2019 = cbind(data2019, pred_a)
+
+# Combine result_a_2019 and empirical probs
+result_a_2019 = merge(result_a_2019, empirical_probs, by = "WEEK", all.x = TRUE)
+
+ggplot(result_a_2019, aes(x = as.factor(WEEK))) +
+  geom_boxplot(aes(y = lambda.1se), fill = "lightblue") +
+  geom_point(aes(y = empirical_prob), color = "red", size = 3) + labs(x = "Week", y = "Result", title = "Boxplot of Result by Week - Q3(a)") +
+  theme_minimal()
+```
+
+
+<br>
+The plot shows that the lasso polynomial regression model accurately captures the underlying non-linear trends in the data. However, this is not very accurate. Between weeks 28-33, the median predictors are consistently above the actual points and between weeks 34-37, the median predictors are consistently below the actual points. 
+
+<br>
+*model from Q3(b)*
+```{r}
+# Extract rows corresponding to YEAR == 2019
+rows_2019 <- which(df$YEAR == 2019)
+
+# Extract corresponding rows from X2
+X2_2019 <- X2[rows_2019, ]
+
+pred_b = predict(lasso_model2, newx = X2_2019, type = "response") 
+
+# Combine with original data for 2019
+result_b_2019 = cbind(data2019, Predicted_Probability = pred_b)
+
+result_b_2019 <- merge(result_b_2019, empirical_probs, by = "WEEK", all.x = TRUE)
+
+# # Convert empirical_prob to numeric 
+# result_b_2019$empirical_prob <- as.numeric(as.character(result_b_2019$empirical_prob))
+
+# Plot
+ggplot(result_b_2019, aes(x = as.factor(WEEK))) +
+  geom_boxplot(aes(y = lambda.1se), fill = "lightblue") +
+  geom_point(aes(y = empirical_prob), color = "red", size = 3) +
+  labs(x = "Week", y = "Result", title = "Boxplot of Result by Week - Q3(b)") +
+  theme_minimal() 
+```
+<br>
+The predictions from the natural cubic spline model is closely align with the empirical probabilities for weeks 23-29. For weeks 30-39, it's not aligned with the medians but it's mostly within the interquartile range. This is due to their good ability to capture non-linear relationships in the data. 
+
+<br>
+*model from Q2*
+```{r}
+pred_binom = predict(binom, newdata = data2019, type = "response")
+
+result_binom_2019 = cbind(data2019, pred_binom)
+
+result_binom_2019 <- merge(result_binom_2019, empirical_probs, by = "WEEK", all.x = TRUE)
+
+ggplot(result_binom_2019, aes(x = as.factor(WEEK))) +
+  geom_boxplot(aes(y = pred_binom), fill = "lightblue") +
+  geom_point(aes(y = empirical_prob), color = "red", size = 3) +
+  labs(x = "Week", y = "Result") +
+  ggtitle("Boxplot of Result by Week - Q2")
+```
+
+<br>
+Linear binomial model's prediction increases linearly where the empirical probabilities is non linear. This discrepancy suggests that the linear model fails to capture the underlying complexity of the data. 
+
+*d) The cross entropy is one common loss for binary classifications. Compare the performance of the three regressions in Q2 and parsimonious regressions in Q3(a) and Q3(b) using the cross entropy. Which regression gives a better fit?*
+
+```{r}
+cross_entropy = function(y, p) {
+  y <- as.numeric(as.character(y)) 
+  -mean(y * log(p) + (1 - y) * log(1 - p))
+}
+
+# For Q3(a)
+cross_entropy_3a = cross_entropy(result_a_2019[,4], result_a_2019[,5])
+# For Q3(b)
+cross_entropy_3b = cross_entropy(result_b_2019[,4], result_b_2019[,5])
+# For Q2
+cross_entropy_2 = cross_entropy(result_binom_2019[,4], result_binom_2019[,5])
+```
+
+Lasso polynomial regression model has cross entropy of `r cross_entropy_3a` and binomial model has cross entropy of `r cross_entropy_2` This suggests that the lasso polynomial regression model performs better fit to the data compared to the linear binomial model. Given the flexibility of the Lasso polynomial regression model in capturing non-linear relationships and handling high-dimensional data, it's not surprising that it outperforms the simpler linear binomial model in terms of cross entropy. 
+
+natural cubic spline model gave cross entropy of `r cross_entropy_3b` which is even smaller than the polynomial regression model. Natural cubic spline models are highly flexible and can capture complex non-linear relationships in the data. Therefore, natural cubic spline model would provide an even better fit to the data, resulting in a smaller cross entropy value compared to the polynomial regression model.

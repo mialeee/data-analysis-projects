@@ -1,0 +1,131 @@
+---
+title: "Assignment 1"
+author: "MinJi Lee"
+subtitle: STATS 762
+output:
+  html_document:
+    highlight: pygments
+    theme: readable
+    toc: yes
+    toc_depth: 2
+    toc_float: yes
+  pdf_document:
+    toc: yes
+    toc_depth: '2'
+---
+```{r}
+library(ggplot2)
+library(tidyverse)
+```
+
+**Q1**
+<br>
+**a)**
+
+*Create a data frame in R.*
+
+```{r}
+df = read.table("acath.txt", header = TRUE)
+```
+
+*Make sure that each column in your data frame has been specified as the appropriate class. *
+
+```{r}
+df$sex = factor(df$sex)
+df$tvdlm = factor(df$tvdlm)
+```
+
+*Take an initial look at the data and comment on what you find.*
+```{r}
+pairs(df)
+```
+
+```{r}
+presence = xtabs(~sex+tvdlm, data=df)
+presence
+```
+602/(602+617)=0.4938474  #male <br>
+106/(165+106)=0.3911439  #female
+<br>
+There is an imbalance in the number of observations between genders. However, the overall balance between disease and non-disease cases seems to be similar across sexes so I decided to ignore it for now. This could potentially lead to biased or inaccurate model. 
+<br>
+This may not provide a complete understanding of the relationship between gender and presence of coronary artery disease (CAD) since we don't know the significance of this difference yet, but based on these proportions, it appears that a higher proportion of males have CAD compared to females. 
+
+```{r}
+ggplot(df, aes(x=tvdlm, y=age, fill=sex)) + geom_boxplot()
+```
+From looking at the plot above, it is evident that, in general, individuals with coronary artery disease (CAD) tend to be slightly older than those without CAD. Additionally, there is a noticeable trend indicating that males tend to experience symptoms, regardless of the presence of disease, at a slightly younger age compared to females.
+
+```{r}
+ggplot(df, aes(x=sex, fill=tvdlm, y=log(cad.dur))) + geom_boxplot()
+```
+Log of cad.dur was used to plot since cad.dur exhibited substantial skewness so it reduces impact of extreme values and make the relationship between variables more apparent. 
+It appears that there is a difference in the duration of symptoms noticed for each gender when the outcome does not result in a diagnosis of coronary artery disease (CAD). However, when the diagnosis confirms the presence of CAD, the duration of symptoms appears to be similar between genders. 
+
+**b)**
+<br>
+*Fit an appropriate regression model using all covariates.*
+
+```{r}
+binom = glm(tvdlm~., family = binomial(link = "logit"), data = df)
+
+summary(binom)
+
+1-pchisq(1959.5, 1485)
+```
+We have a binary response which follows a binomial distribution so I chose to fit a logistic regression. Done chi-squared test and the p-value came out smaller than they should (1.110223e-15): there is a significant difference between the maximum model and the fitted model. <br>
+Possible reason might be over-dispersion. So I will continue with quasi binomial to adjust for over-dispersion. 
+
+```{r}
+quasibinom = glm(tvdlm~., family = quasibinomial, data = df)
+```
+
+*Describe the impact that each of the explanatory variables has on the probability that severe coronary artery disease is present.*
+
+```{r}
+summary(quasibinom)
+
+100 * (1-exp(coef(quasibinom)))
+```
+
+Holding other variables constant, 
+
+  - changing from male (0) to female (1) decreases the log odds of severe CAD presence by  approximately 0.66 : which is 48.12% reduction in the odds of severe CAD being present. 
+  Since the p-value is small, there is a significant evidence to suggest a relationship between the severe CAD presence and sex. 
+
+  - the log odds of severe CAD presence increases by 0.037 for every 1 year increase in age : which is 3.81% increase in the odds of severe CAD being present.
+  Since the p-value is small, there is a significant evidence to suggest a relationship between the severe CAD presence and age.  
+  
+  - the log odds of severe CAD presence increases by 0.0057 for every 1 week increase in number of weeks that symptoms have been noticed : which is 0.57% increase in the odds of severe CAD being present.
+  Since the p-value is small, there is a significant evidence to suggest a relationship between the severe CAD presence and number of weeks that symptoms have been noticed.  
+  
+  - the log odds of severe CAD presence increases by 0.0029 for every 1 unit increase in blood cholesterol level : which is 0.29% increase in the odds of severe CAD being present.
+  Since the p-value is small enough, there is a significant evidence to suggest a relationship between the severe CAD presence and cholesterol level.  
+
+**c)**
+
+*A researcher suspected that the effect of a patient’s condition and information may depend on sex. Is this claim supported by your analysis?*
+
+From the analysis done so far, I can only say that the presence of CAD depends on sex. To confirm the researchers claim, more study has to be done to check the interactions between sex and other variables. 
+
+*Check for possibility that gender interacts with one or more of the other explanatory variables.*
+
+```{r}
+intact = glm(tvdlm ~ sex * age * cad.dur * choleste, family = quasibinomial, data = df)
+anova(intact, test = "Chisq")
+```
+There is a significant evidence that there is an interaction between sex and cad.dur. 
+
+*Explain the impact they have on the way the factors involved affect the response.*
+```{r}
+quasibinom2 = glm(tvdlm ~ age + cad.dur + choleste + sex * cad.dur, family = quasibinomial, data = df)
+summary(quasibinom2)
+anova(quasibinom, quasibinom2, test = "Chisq")
+```
+There is a significant difference in the model fit with the addition of the interaction term (sex * cad.dur). Model 2 has a lower deviance of 1946.7 than model 1's deviance of 1959.5. Since deviance is a measure of how well the model fits the data, it is found that model 2 with smaller deviance provides a better fit to the data compared to model 1.
+
+Without the interaction term, the effect of cad.dur on the likelihood of severe coronary artery disease would be assumed to be the same for all individuals regardless of their sex. However, the presence of the interaction term suggests that the duration of symptoms has a different influence on the likelihood of severe CAD for males and females. For males, each additional week of symptoms is associated with an increase of 0.0077 in the log odds of severe CAD. For females, each additional week of symptoms is associated with a decrease of 0.001832 in the log odds of severe CAD (calculated as 0.007733 - 0.009565).
+
+The coefficient for sex1 (-0.249597) is not statistically significant (p-value of 0.173820), indicating that without considering the interaction term, the difference in log odds of severe CAD between males and females is not significant. Therefore, while the interaction term suggests that the duration of symptoms has a different influence on the likelihood of severe CAD for males and females, we cannot conclude that the sex of a patient by itself has a significant impact on their condition.
+
+
